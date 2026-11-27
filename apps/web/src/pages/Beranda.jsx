@@ -67,6 +67,15 @@ const garisBuku = {
     "repeating-linear-gradient(180deg, transparent 0 31px, rgba(50,120,80,.28) 31px 32px)",
 };
 
+/* Tali anyaman: garis diagonal selang-seling */
+const tali = {
+  backgroundImage:
+    "repeating-linear-gradient(-55deg, #e0bf78 0 4px, #8f6b2c 4px 8px)",
+};
+const cincin = {
+  background: "radial-gradient(circle at 35% 30%, #f6de95, #9a7728)",
+};
+
 /* Teks timbul / terukir */
 const putihTimbul = { color: "#ffffff", textShadow: "0 2px 0 rgba(0,70,35,.7), 0 4px 8px rgba(0,0,0,.35)" };
 const terukir = { color: "#0a3a21", textShadow: "0 1px 0 rgba(235,255,240,.65), 0 -1px 1px rgba(0,0,0,.4)" };
@@ -99,24 +108,48 @@ const Lubang = () => (
 const Beranda = () => {
   return (
     <div className="min-h-screen scroll-smooth text-[#0f3a26]" style={lumut}>
-      {/* Hero */}
-      <section className="mx-auto max-w-6xl px-5 py-16 md:py-24">
-        {/* Papan nama tergantung */}
-        <div className="relative mx-auto max-w-3xl pt-14 text-center">
-          <span aria-hidden="true" className="absolute left-[18%] top-0 h-14 w-1.5 bg-gradient-to-r from-[#d8c08a] to-[#8f7440] shadow-md" />
-          <span aria-hidden="true" className="absolute right-[18%] top-0 h-14 w-1.5 bg-gradient-to-r from-[#d8c08a] to-[#8f7440] shadow-md" />
-          <div
-            className="rounded-2xl px-6 py-8 shadow-[0_14px_24px_rgba(0,0,0,0.55),inset_0_2px_0_rgba(255,220,170,0.35),inset_0_-6px_12px_rgba(0,0,0,0.45)]"
-            style={{ ...lumut, backgroundColor: "#1f8a55", filter: "brightness(1.05)" }}
-          >
-            <p className="text-sm font-semibold" style={putihTimbul}>KOSAN</p>
-            <h1 className="font-serif text-5xl font-extrabold md:text-7xl" style={putihTimbul}>
-              Pondok Hijau
-            </h1>
+      {/* Hero (tanpa padding atas supaya tali menempel ke navbar) */}
+      <section className="mx-auto max-w-6xl px-5 pb-16 md:pb-24">
+        {/* Papan nama tergantung: dibungkus overflow-hidden supaya jatuh dari balik navbar */}
+        <div className="mx-auto max-w-4xl overflow-hidden px-10 pb-12">
+          <div className="ph-swing relative pt-28 text-center md:pt-36">
+            {/* Tali kiri & kanan, dari tepi navbar sampai papan */}
+            <span
+              aria-hidden="true"
+              className="absolute left-[18%] top-0 h-[7.5rem] w-2 rounded-b-sm shadow-[1px_0_3px_rgba(0,0,0,0.45)] md:h-[9.5rem]"
+              style={tali}
+            />
+            <span
+              aria-hidden="true"
+              className="absolute right-[18%] top-0 h-[7.5rem] w-2 rounded-b-sm shadow-[1px_0_3px_rgba(0,0,0,0.45)] md:h-[9.5rem]"
+              style={tali}
+            />
+
+            {/* Card papan */}
+            <div
+              className="relative z-10 rounded-2xl px-6 py-8 shadow-[0_14px_24px_rgba(0,0,0,0.55),inset_0_2px_0_rgba(255,220,170,0.35),inset_0_-6px_12px_rgba(0,0,0,0.45)]"
+              style={{ ...lumut, backgroundColor: "#1f8a55", filter: "brightness(1.05)" }}
+            >
+              {/* Cincin kuningan tempat tali mengait */}
+              <span
+                aria-hidden="true"
+                className="absolute -top-2.5 left-[calc(18%-0.4rem)] h-5 w-5 rounded-full shadow-[0_2px_4px_rgba(0,0,0,0.5),inset_-1px_-1px_2px_rgba(0,0,0,0.35)]"
+                style={cincin}
+              />
+              <span
+                aria-hidden="true"
+                className="absolute -top-2.5 right-[calc(18%-0.4rem)] h-5 w-5 rounded-full shadow-[0_2px_4px_rgba(0,0,0,0.5),inset_-1px_-1px_2px_rgba(0,0,0,0.35)]"
+                style={cincin}
+              />
+              <p className="text-sm font-semibold" style={putihTimbul}>KOSAN</p>
+              <h1 className="font-serif text-5xl font-extrabold md:text-7xl" style={putihTimbul}>
+                Pondok Hijau
+              </h1>
+            </div>
           </div>
         </div>
 
-        <div className="mt-14 grid items-center gap-10 md:grid-cols-2">
+        <div className="mt-6 grid items-center gap-10 md:grid-cols-2">
           {/* Catatan kertas */}
           <div className={`relative rounded-md p-8 ${bayangKertas}`} style={kertas}>
             <Pin />
@@ -280,6 +313,29 @@ const Beranda = () => {
       <footer className="border-t border-black/30 bg-black/25 py-6 text-center text-sm text-[#d8f6dd]">
         © {new Date().getFullYear()} Kosan Pondok Hijau
       </footer>
+
+      {/* Animasi jatuh + ayunan bandul teredam */}
+      <style>{`
+        .ph-swing {
+          transform-origin: 50% 0;
+          animation: ph-drop-swing 3.4s both;
+          will-change: transform;
+        }
+        @keyframes ph-drop-swing {
+          0%   { transform: translateY(-110%) rotate(0deg);   animation-timing-function: cubic-bezier(0.55, 0, 1, 0.6); }
+          36%  { transform: translateY(0)     rotate(0deg);   animation-timing-function: ease-out; }
+          44%  { transform: translateY(-2.5%) rotate(1.5deg); animation-timing-function: ease-in; }
+          50%  { transform: translateY(0)     rotate(5deg);   animation-timing-function: ease-in-out; }
+          61%  { transform: rotate(-3.8deg);                  animation-timing-function: ease-in-out; }
+          72%  { transform: rotate(2.4deg);                   animation-timing-function: ease-in-out; }
+          82%  { transform: rotate(-1.3deg);                  animation-timing-function: ease-in-out; }
+          91%  { transform: rotate(0.6deg);                   animation-timing-function: ease-in-out; }
+          100% { transform: translateY(0)     rotate(0deg); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .ph-swing { animation: none; }
+        }
+      `}</style>
     </div>
   );
 };
