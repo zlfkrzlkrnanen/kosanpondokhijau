@@ -1,0 +1,814 @@
+// ============================================================================
+//  SCHEMA SISTEM KOST
+//  Role      : ADMIN, OWNER (pemilik), CUSTOMER
+//  Fitur     : Kost & kamar, pemesanan, invoice, payment gateway, refund,
+//              payout ke pemilik, promo, review, keluhan, notifikasi, audit log
+// ============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql" // ganti "mysql" jika memakai MySQL
+}
+
+// ============================================================================
+//  ENUMS
+// ============================================================================
+
+enum Role {
+  ADMIN
+  OWNER
+  CUSTOMER
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum KostType {
+  PUTRA
+  PUTRI
+  CAMPUR
+}
+
+enum KostStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  REJECTED
+  SUSPENDED
+}
+
+enum RoomStatus {
+  AVAILABLE
+  BOOKED
+  OCCUPIED
+  MAINTENANCE
+}
+
+enum FacilityCategory {
+  ROOM
+  BATHROOM
+  COMMON
+  PARKING
+  SECURITY
+}
+
+enum RentPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  SEMIANNUAL
+  YEARLY
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT // menunggu pembayaran
+  PAID            // sudah dibayar, menunggu check-in / konfirmasi
+  CONFIRMED       // dikonfirmasi pemilik
+  ACTIVE          // sedang menghuni
+  COMPLETED       // masa sewa selesai
+  CANCELLED       // dibatalkan customer/admin
+  REJECTED        // ditolak pemilik
+  EXPIRED         // tidak dibayar sampai batas waktu
+}
+
+enum InvoiceType {
+  BOOKING   // pembayaran awal (sewa + deposit)
+  RENEWAL   // perpanjangan sewa
+  DEPOSIT
+  PENALTY   // denda
+  OTHER
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PAID
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentGateway {
+  MIDTRANS
+  XENDIT
+  DOKU
+  MANUAL_TRANSFER
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  VIRTUAL_ACCOUNT
+  EWALLET
+  QRIS
+  CREDIT_CARD
+  CONVENIENCE_STORE
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  CHALLENGE
+  SUCCESS
+  FAILED
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum VisitStatus {
+  REQUESTED
+  APPROVED
+  RESCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum NotificationType {
+  BOOKING
+  PAYMENT
+  PAYOUT
+  REVIEW
+  COMPLAINT
+  VISIT
+  SYSTEM
+}
+
+// ============================================================================
+//  USER, PROFIL & SESSION
+// ============================================================================
+
+model User {
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  phone           String?   @unique
+  passwordHash    String
+  role            Role      @default(CUSTOMER)
+  avatarUrl       String?
+  isActive        Boolean   @default(true)
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  customerProfile CustomerProfile?
+  ownerProfile    OwnerProfile?
+
+  sessions      Session[]
+  kosts         Kost[]           @relation("KostOwner")
+  bookings      Booking[]        @relation("BookingCustomer")
+  reviews       Review[]
+  favorites     Favorite[]
+  visitRequests VisitRequest[]
+  complaints    Complaint[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  payouts       Payout[]         @relation("PayoutOwner")
+  payoutsDone   Payout[]         @relation("PayoutProcessedBy")
+  refundsDone   Refund[]         @relation("RefundProcessedBy")
+  promosCreated Promo[]
+
+  @@index([role])
+  @@map("users")
+}
+
+model CustomerProfile {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  nik              String?   @unique
+  gender           Gender?
+  birthDate        DateTime?
+  occupation       String?
+  institution      String? // kampus / kantor
+  address          String?
+  ktpUrl           String?
+  emergencyName    String?
+  emergencyPhone   String?
+  emergencyRelation String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("customer_profiles")
+}
+
+model OwnerProfile {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  businessName  String?
+  ktpNumber     String?   @unique
+  ktpUrl        String?
+  npwp          String?
+  address       String?
+  // rekening untuk pencairan dana (payout)
+  bankName      String?
+  accountNumber String?
+  accountHolder String?
+  isVerified    Boolean   @default(false)
+  verifiedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("owner_profiles")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ============================================================================
+//  KOST, TIPE KAMAR, KAMAR & FASILITAS
+// ============================================================================
+
+model Kost {
+  id              String     @id @default(cuid())
+  ownerId         String
+  name            String
+  slug            String     @unique
+  description     String?
+  type            KostType   @default(CAMPUR)
+  status          KostStatus @default(DRAFT)
+  rejectionReason String?
+  rules           String? // tata tertib kost
+  contactPhone    String?
+
+  address    String
+  village    String?
+  district   String?
+  city       String
+  province   String
+  postalCode String?
+  latitude   Decimal? @db.Decimal(10, 7)
+  longitude  Decimal? @db.Decimal(10, 7)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  owner      User           @relation("KostOwner", fields: [ownerId], references: [id])
+  images     KostImage[]
+  facilities KostFacility[]
+  roomTypes  RoomType[]
+  rooms      Room[]
+  bookings   Booking[]
+  reviews    Review[]
+  favorites  Favorite[]
+  visits     VisitRequest[]
+  complaints Complaint[]
+
+  @@index([ownerId])
+  @@index([city, status])
+  @@index([type])
+  @@map("kosts")
+}
+
+model KostImage {
+  id        String   @id @default(cuid())
+  kostId    String
+  url       String
+  caption   String?
+  isCover   Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  kost Kost @relation(fields: [kostId], references: [id], onDelete: Cascade)
+
+  @@index([kostId])
+  @@map("kost_images")
+}
+
+model Facility {
+  id        String           @id @default(cuid())
+  name      String           @unique
+  icon      String?
+  category  FacilityCategory
+  createdAt DateTime         @default(now())
+
+  kosts     KostFacility[]
+  roomTypes RoomTypeFacility[]
+
+  @@map("facilities")
+}
+
+model KostFacility {
+  kostId     String
+  facilityId String
+
+  kost     Kost     @relation(fields: [kostId], references: [id], onDelete: Cascade)
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@id([kostId, facilityId])
+  @@map("kost_facilities")
+}
+
+model RoomType {
+  id            String   @id @default(cuid())
+  kostId        String
+  name          String // contoh: "Tipe A - AC + KM Dalam"
+  description   String?
+  sizeM2        Decimal? @db.Decimal(6, 2)
+  capacity      Int      @default(1)
+  depositAmount Decimal  @default(0) @db.Decimal(12, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  kost       Kost               @relation(fields: [kostId], references: [id], onDelete: Cascade)
+  prices     RoomPrice[]
+  images     RoomTypeImage[]
+  facilities RoomTypeFacility[]
+  rooms      Room[]
+
+  @@index([kostId])
+  @@map("room_types")
+}
+
+// Harga per periode sewa (harian, bulanan, dst.)
+model RoomPrice {
+  id         String     @id @default(cuid())
+  roomTypeId String
+  period     RentPeriod
+  price      Decimal    @db.Decimal(12, 2)
+  isActive   Boolean    @default(true)
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([roomTypeId, period])
+  @@map("room_prices")
+}
+
+model RoomTypeImage {
+  id         String   @id @default(cuid())
+  roomTypeId String
+  url        String
+  caption    String?
+  isCover    Boolean  @default(false)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@index([roomTypeId])
+  @@map("room_type_images")
+}
+
+model RoomTypeFacility {
+  roomTypeId String
+  facilityId String
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@id([roomTypeId, facilityId])
+  @@map("room_type_facilities")
+}
+
+model Room {
+  id         String     @id @default(cuid())
+  kostId     String
+  roomTypeId String
+  number     String // nomor kamar, contoh: "A-101"
+  floor      Int        @default(1)
+  status     RoomStatus @default(AVAILABLE)
+  notes      String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  kost     Kost      @relation(fields: [kostId], references: [id], onDelete: Cascade)
+  roomType RoomType  @relation(fields: [roomTypeId], references: [id])
+  bookings Booking[]
+
+  @@unique([kostId, number])
+  @@index([roomTypeId, status])
+  @@map("rooms")
+}
+
+// ============================================================================
+//  PROMO
+// ============================================================================
+
+model Promo {
+  id             String       @id @default(cuid())
+  code           String       @unique
+  title          String
+  description    String?
+  discountType   DiscountType
+  discountValue  Decimal      @db.Decimal(12, 2)
+  maxDiscount    Decimal?     @db.Decimal(12, 2)
+  minAmount      Decimal?     @db.Decimal(12, 2)
+  quota          Int? // null = tanpa batas
+  usedCount      Int          @default(0)
+  startsAt       DateTime
+  endsAt         DateTime
+  isActive       Boolean      @default(true)
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  createdBy User?     @relation(fields: [createdById], references: [id])
+  bookings  Booking[]
+
+  @@map("promos")
+}
+
+// ============================================================================
+//  PEMESANAN (BOOKING)
+// ============================================================================
+
+model Booking {
+  id         String        @id @default(cuid())
+  code       String        @unique // contoh: BK-20261127-0001
+  customerId String
+  kostId     String
+  roomId     String
+  promoId    String?
+  status     BookingStatus @default(PENDING_PAYMENT)
+
+  period        RentPeriod @default(MONTHLY)
+  durationCount Int        @default(1) // jumlah periode, mis. 3 (bulan)
+  checkInDate   DateTime
+  checkOutDate  DateTime
+
+  // snapshot harga saat pemesanan
+  unitPrice      Decimal @db.Decimal(12, 2)
+  subtotal       Decimal @db.Decimal(12, 2)
+  depositAmount  Decimal @default(0) @db.Decimal(12, 2)
+  adminFee       Decimal @default(0) @db.Decimal(12, 2)
+  discountAmount Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount    Decimal @db.Decimal(12, 2)
+
+  occupantCount Int     @default(1)
+  notes         String?
+
+  // perpanjangan: menunjuk ke booking sebelumnya
+  parentBookingId String?
+
+  expiresAt     DateTime? // batas waktu pembayaran
+  confirmedAt   DateTime?
+  checkedInAt   DateTime?
+  checkedOutAt  DateTime?
+  cancelledAt   DateTime?
+  cancelReason  String?
+  rejectReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer      User      @relation("BookingCustomer", fields: [customerId], references: [id])
+  kost          Kost      @relation(fields: [kostId], references: [id])
+  room          Room      @relation(fields: [roomId], references: [id])
+  promo         Promo?    @relation(fields: [promoId], references: [id])
+  parentBooking Booking?  @relation("BookingExtension", fields: [parentBookingId], references: [id])
+  extensions    Booking[] @relation("BookingExtension")
+
+  invoices   Invoice[]
+  refunds    Refund[]
+  review     Review?
+  complaints Complaint[]
+
+  @@index([customerId, status])
+  @@index([kostId, status])
+  @@index([roomId, checkInDate, checkOutDate])
+  @@index([expiresAt])
+  @@map("bookings")
+}
+
+// ============================================================================
+//  INVOICE & PEMBAYARAN (PAYMENT GATEWAY)
+// ============================================================================
+
+model Invoice {
+  id            String        @id @default(cuid())
+  invoiceNumber String        @unique // contoh: INV-20261127-0001
+  bookingId     String
+  type          InvoiceType   @default(BOOKING)
+  status        InvoiceStatus @default(UNPAID)
+  description   String?
+
+  amount         Decimal @db.Decimal(12, 2)
+  adminFee       Decimal @default(0) @db.Decimal(12, 2)
+  discountAmount Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount    Decimal @db.Decimal(12, 2)
+
+  dueDate   DateTime
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  booking    Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payments   Payment[]
+  payoutItem PayoutItem?
+
+  @@index([bookingId])
+  @@index([status, dueDate])
+  @@map("invoices")
+}
+
+// Satu invoice bisa memiliki beberapa percobaan pembayaran
+model Payment {
+  id        String         @id @default(cuid())
+  invoiceId String
+  orderId   String         @unique // order_id / external_id yang dikirim ke gateway
+  gateway   PaymentGateway
+  method    PaymentMethod?
+  channel   String? // bca, bni, mandiri, gopay, shopeepay, dll.
+  status    PaymentStatus  @default(PENDING)
+
+  amount Decimal  @db.Decimal(12, 2)
+  fee    Decimal  @default(0) @db.Decimal(12, 2) // biaya gateway
+
+  // data dari gateway
+  snapToken            String?
+  paymentUrl           String?
+  vaNumber             String?
+  qrString             String?
+  gatewayTransactionId String?  @unique
+  gatewayStatus        String?
+  fraudStatus          String?
+  rawResponse          Json?
+
+  // untuk transfer manual
+  proofUrl   String?
+  verifiedAt DateTime?
+
+  expiresAt DateTime?
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  invoice  Invoice             @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  refunds  Refund[]
+  webhooks PaymentWebhookLog[]
+
+  @@index([invoiceId])
+  @@index([status])
+  @@map("payments")
+}
+
+// Log semua notifikasi/webhook dari gateway (audit & debugging)
+model PaymentWebhookLog {
+  id             String         @id @default(cuid())
+  paymentId      String?
+  gateway        PaymentGateway
+  eventType      String?
+  orderId        String?
+  payload        Json
+  signatureValid Boolean        @default(false)
+  processed      Boolean        @default(false)
+  errorMessage   String?
+  receivedAt     DateTime       @default(now())
+
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([gateway, processed])
+  @@map("payment_webhook_logs")
+}
+
+model Refund {
+  id              String       @id @default(cuid())
+  paymentId       String
+  bookingId       String
+  amount          Decimal      @db.Decimal(12, 2)
+  reason          String
+  status          RefundStatus @default(REQUESTED)
+  gatewayRefundId String?
+  rejectReason    String?
+  processedById   String?
+  processedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  payment     Payment @relation(fields: [paymentId], references: [id])
+  booking     Booking @relation(fields: [bookingId], references: [id])
+  processedBy User?   @relation("RefundProcessedBy", fields: [processedById], references: [id])
+
+  @@index([bookingId])
+  @@index([status])
+  @@map("refunds")
+}
+
+// ============================================================================
+//  PAYOUT (PENCAIRAN DANA KE PEMILIK KOST)
+// ============================================================================
+
+model Payout {
+  id            String       @id @default(cuid())
+  code          String       @unique // contoh: PO-20261127-0001
+  ownerId       String
+  periodStart   DateTime
+  periodEnd     DateTime
+  grossAmount   Decimal      @db.Decimal(14, 2) // total pembayaran masuk
+  platformFee   Decimal      @db.Decimal(14, 2) // komisi platform
+  gatewayFee    Decimal      @default(0) @db.Decimal(14, 2)
+  netAmount     Decimal      @db.Decimal(14, 2) // yang ditransfer ke pemilik
+  status        PayoutStatus @default(PENDING)
+
+  // snapshot rekening pemilik saat payout dibuat
+  bankName      String
+  accountNumber String
+  accountHolder String
+
+  proofUrl      String?
+  notes         String?
+  processedById String?
+  transferredAt DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  owner       User         @relation("PayoutOwner", fields: [ownerId], references: [id])
+  processedBy User?        @relation("PayoutProcessedBy", fields: [processedById], references: [id])
+  items       PayoutItem[]
+
+  @@index([ownerId, status])
+  @@map("payouts")
+}
+
+model PayoutItem {
+  id          String  @id @default(cuid())
+  payoutId    String
+  invoiceId   String  @unique // satu invoice hanya boleh masuk satu payout
+  amount      Decimal @db.Decimal(14, 2)
+  platformFee Decimal @db.Decimal(14, 2)
+  netAmount   Decimal @db.Decimal(14, 2)
+
+  payout  Payout  @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([payoutId])
+  @@map("payout_items")
+}
+
+// ============================================================================
+//  INTERAKSI CUSTOMER: REVIEW, FAVORIT, SURVEI, KELUHAN
+// ============================================================================
+
+model Review {
+  id         String    @id @default(cuid())
+  bookingId  String    @unique // 1 booking = 1 review
+  kostId     String
+  customerId String
+  rating     Int // 1 - 5
+  comment    String?
+  ownerReply String?
+  repliedAt  DateTime?
+  isVisible  Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  booking  Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  kost     Kost    @relation(fields: [kostId], references: [id], onDelete: Cascade)
+  customer User    @relation(fields: [customerId], references: [id])
+
+  @@index([kostId, isVisible])
+  @@map("reviews")
+}
+
+model Favorite {
+  userId    String
+  kostId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kost Kost @relation(fields: [kostId], references: [id], onDelete: Cascade)
+
+  @@id([userId, kostId])
+  @@map("favorites")
+}
+
+// Jadwal survei / lihat kost sebelum memesan
+model VisitRequest {
+  id          String      @id @default(cuid())
+  kostId      String
+  customerId  String
+  scheduledAt DateTime
+  status      VisitStatus @default(REQUESTED)
+  notes       String?
+  ownerNotes  String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  kost     Kost @relation(fields: [kostId], references: [id], onDelete: Cascade)
+  customer User @relation(fields: [customerId], references: [id])
+
+  @@index([kostId, status])
+  @@index([customerId])
+  @@map("visit_requests")
+}
+
+model Complaint {
+  id          String          @id @default(cuid())
+  bookingId   String
+  kostId      String
+  customerId  String
+  title       String
+  description String
+  status      ComplaintStatus @default(OPEN)
+  response    String?
+  resolvedAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  booking  Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  kost     Kost    @relation(fields: [kostId], references: [id], onDelete: Cascade)
+  customer User    @relation(fields: [customerId], references: [id])
+
+  @@index([kostId, status])
+  @@index([customerId])
+  @@map("complaints")
+}
+
+// ============================================================================
+//  NOTIFIKASI, AUDIT LOG & PENGATURAN
+// ============================================================================
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String // contoh: "KOST_APPROVED", "PAYOUT_PAID"
+  entity    String // contoh: "Kost", "Payout"
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@map("audit_logs")
+}
+
+// Pengaturan platform: komisi, biaya admin, batas waktu bayar, dll.
+model Setting {
+  key       String   @id // contoh: "platform_fee_percent", "payment_expiry_minutes"
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
